@@ -1,0 +1,21 @@
+write TAU verilog module and its specs  is as follows
+inputs:
+idle state of 2 SPUs and write frame notification consists of 2 bits frame number and write valid signal
+output:
+4 bits determine which two frames to process to each spu
+overflow flag 
+procedure:
+it has 3 2bits reg for frame_i-1, frame_i, and frame_i+1
+its fsm is as follows 
+idle :
+if it has write done notf it goes to 1_frame state and store this frame at framei
+1_frame:
+if it has write done notf it shifts frame i to i-1 and store new one at i and go to state 2_frames
+2_frames:
+at this it monitors the idle state of spus if one if idle it gives it the 2 frames and go back to 1_frame state if no new notf came it it came at the same time it stay at same state but shift i to i-1 and store new one at i
+if   notf camewithout idle it goes to 3_frames state shift and store new one in i+1
+3_frames:
+at this it monitors the idle state of spus if one if idle it gives it the 2 i and i-1 frames and shifts i+1 and  i to be i and i-1 and go to state 2_frames
+if two of spus are idle it sends to spu1 i and i-1 and to spu 2 i+1 and i
+and go to state 1_frame and make the i+1 be i
+and if it got notf at this state it rises a overflow flag 
