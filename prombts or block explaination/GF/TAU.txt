@@ -1,9 +1,12 @@
 write TAU verilog module and its specs  is as follows
+
 inputs:
 idle state of 2 SPUs and write frame notification consists of 2 bits frame number and write valid signal
+
 output:
 4 bits determine which two frames to process to each spu
 overflow flag 
+
 procedure:
 it has 3 2bits reg for frame_i-1, frame_i, and frame_i+1
 its fsm is as follows 

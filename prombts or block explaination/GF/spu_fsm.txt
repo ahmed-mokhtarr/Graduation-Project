@@ -1,0 +1,36 @@
+write spu_fsm verilog module and its specs  is as follows
+
+params: 
+imgwidth, imgheight, each frame's of the 4 frames in the memory hardcoded address and d vector size
+
+local params:
+each layer of each frame hard coded calculated address-they are stored in memory from base addres as follows original then first thubnail and so on to later 4 then the flow between this frame and its prev frame-
+
+inputs:
+framesnums, start_spu, layer done or write done, 
+
+output:
+idle_spu, base address for (framei, framei-1, upper_opt_flowi) 
+layerconfig so the memory read no which layer and is there a flow or not and its limit as there is only one valid flow at a time and the write module overwrite it each time -for needed mem for this layer-in big slot reserved for flow
+and memory read command
+ 
+procedure: 
+it has counter reg for what is current layerproccessed
+its states as follows
+
+idle:
+when it receives start_spu it pulls down idle, stores framesids, sets layer counter to smalles layer(4) and go to memory read init 
+
+pyramid processing
+Issue Read Commands with the layer config and calculated addresses for current layer-it need case statement for each id-
+then goes to layer switching state
+
+
+layer switching
+now monitor Write Completion
+Once a layer is complete, the FSM checks its layer counter.
+If Layer > 0, it decrements the layer counter and jumps back to State pyramid processing
+If Layer == 0 it means the full GF optical flow vector field has been calculated and retur back to idle 
+
+
+
