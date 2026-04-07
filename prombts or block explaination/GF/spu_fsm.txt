@@ -1,36 +1,39 @@
-write spu_fsm verilog module and its specs  is as follows
-
-params: 
-imgwidth, imgheight, each frame's of the 4 frames in the memory hardcoded address and d vector size
+params:
+None. 
 
 local params:
-each layer of each frame hard coded calculated address-they are stored in memory from base addres as follows original then first thubnail and so on to later 4 then the flow between this frame and its prev frame-
+FSM state encodings (IDLE, PYRAMID_PROCESSING, LAYER_SWITCHING).
 
 inputs:
-framesnums, start_spu, layer done or write done, 
+clk, rst_n
+frame_nums (4-bit bus containing indices for the current and previous frames)
+start_spu (trigger signal from TAU)
+layer_done (notification indicating read/write processing for the current layer is complete)
 
-output:
-idle_spu, base address for (framei, framei-1, upper_opt_flowi) 
-layerconfig so the memory read no which layer and is there a flow or not and its limit as there is only one valid flow at a time and the write module overwrite it each time -for needed mem for this layer-in big slot reserved for flow
-and memory read command
- 
-procedure: 
-it has counter reg for what is current layerproccessed
-its states as follows
+outputs:
+idle_spu (status flag)
+mem_read_cmd (pulse to trigger the memory read module)
+Configuration outputs (replacing calculated addresses):
+
+frame_i_idx (2 bits)
+
+frame_i_minus_1_idx (2 bits)
+
+current_layer (3 bits)
+
+has_flow (1 bit flag determining if an upper optical flow layer exists to be fetched)
+
+procedure:
+It uses a counter register to track current_layer (from 4 down to 0) and combinational logic to determine has_flow (true if current_layer < 4). Its states are as follows:
 
 idle:
-when it receives start_spu it pulls down idle, stores framesids, sets layer counter to smalles layer(4) and go to memory read init 
+When it receives start_spu, it pulls down idle_spu, extracts and stores the frame indices from frame_nums, sets the layer counter to the smallest layer (4), and goes to the pyramid processing state.
 
-pyramid processing
-Issue Read Commands with the layer config and calculated addresses for current layer-it need case statement for each id-
-then goes to layer switching state
+pyramid processing:
+Issues the mem_read_cmd pulse. Because the FSM continuously outputs the configuration (frame_i_idx, frame_i_minus_1_idx, current_layer, has_flow), the Memory Read Module directly receives the parameters it needs to calculate addresses itself. The FSM then immediately goes to the layer switching state.
 
-
-layer switching
-now monitor Write Completion
+layer switching:
+Monitors the layer_done completion signal.
 Once a layer is complete, the FSM checks its layer counter.
-If Layer > 0, it decrements the layer counter and jumps back to State pyramid processing
-If Layer == 0 it means the full GF optical flow vector field has been calculated and retur back to idle 
-
-
-
+If Layer > 0, it decrements the layer counter and jumps back to the pyramid processing state.
+If Layer == 0, it means the full GF optical flow vector field has been calculated for the frame pair. It pulls idle_spu high and returns back to the idle state.
