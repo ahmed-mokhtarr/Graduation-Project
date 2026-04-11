@@ -1,5 +1,3 @@
-write TAU verilog module and its specs  is as follows
-
 inputs:
 idle state of 2 SPUs and write frame notification consists of 2 bits frame number and write valid signal
 
