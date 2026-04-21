@@ -1,0 +1,62 @@
+import os
+
+def calculate_clipping_with_accumulator(input_file, output_file, clip_limit=675):
+    print(f"Reading {input_file}...")
+    if not os.path.exists(input_file):
+        print(f"Error: {input_file} not found. Generate it first!")
+        return
+
+    with open(input_file, 'r') as f:
+        bins = [int(line.strip()) for line in f.readlines()]
+
+    if len(bins) != 4096:
+        print(f"Error: Input file must have exactly 4096 lines. Found {len(bins)}.")
+        return
+
+    golden_clipped = []
+
+    print("Applying Phase Accumulator redistribution (Matches Verilog)...")
+    for tile in range(16):
+        tile_start = tile * 256
+        tile_bins = bins[tile_start : tile_start + 256]
+
+        # 1. Calculate Excess and Clip the Bins
+        excess = 0
+        clipped_bins = []
+        for val in tile_bins:
+            if val > clip_limit:
+                excess += (val - clip_limit)
+                clipped_bins.append(clip_limit)
+            else:
+                clipped_bins.append(val)
+
+        # 2. Calculate Base Addition and Remainder
+        excess_per_bin = excess // 256
+        remainder = excess % 256
+
+        # 3. Phase Accumulator Logic (Matches your Verilog EXACTLY)
+        acc = 255  # Initialize to 255 just like your Verilog reset block
+        
+        for val in clipped_bins:
+            # next_acc = remainder_acc[7:0] + excess_per_bin_reminder
+            next_acc = acc + remainder
+            
+            # Extract the 9th bit (next_acc[8])
+            carry = next_acc >> 8 
+            
+            # Keep only the bottom 8 bits for the next cycle
+            acc = next_acc & 0xFF 
+            
+            # Calculate final bin: clipped_data + base_excess + overflow_bit
+            new_val = val + excess_per_bin + carry
+            golden_clipped.append(new_val)
+
+    print(f"Writing golden clipped reference to {output_file}...")
+    with open(output_file, 'w') as f:
+        for val in golden_clipped:
+            f.write(f"{val}\n")
+
+    print("Done! Ready for testbench comparison.")
+
+# Run the function
+calculate_clipping_with_accumulator('golden_histogram.txt', 'golden_clipped.txt')

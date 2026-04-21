@@ -1,4 +1,4 @@
-module TILE_GENERATION #(
+module tile_generation #(
     parameter IMG_WIDTH = 1280,
     parameter IMG_HEIGHT = 720,
     parameter TILE_H_NUM = 4,
@@ -21,8 +21,8 @@ module TILE_GENERATION #(
     output  reg   [3:0]       tile_idx,     // tile's  total index (0:TILE_V_NUM - 1)
     output  reg   [8:0]       tile_x_count, // pixel's horizontal coordinates in its tile (0:TILE_WIDTH - 1)
     output  reg   [7:0]       tile_y_count, // pixel's vertical coordinates in its tile (0:TILE_HEIGHT - 1)
-    output  reg   [7:0]       pixel_out     // data_out
-    output  reg               pixel_v_out,      // valid out
+    output  reg   [7:0]       pixel_out,     // data_out
+    output  reg               pixel_v_out     // valid out
 );
 
  localparam TILE_WIDTH = IMG_WIDTH / TILE_H_NUM;    // 320
@@ -36,9 +36,6 @@ module TILE_GENERATION #(
     begin
         x_count <= 0;
         y_count <= 0;
-        tile_x <= 0;
-        tile_y <= 0;
-        tile_idx <= 0;
     end 
     else 
     begin
@@ -47,13 +44,13 @@ module TILE_GENERATION #(
             if (x_count < IMG_WIDTH - 1)
                  x_count <= x_count + 1;
             else
-            begin
+             begin
                 x_count <= 0;
                 if (y_count < IMG_HEIGHT - 1)
                     y_count <= y_count + 1;
                 else
                     y_count <= 0;
-            end
+             end
         end            
     end
     
@@ -73,11 +70,13 @@ module TILE_GENERATION #(
             if (tile_x_count < TILE_WIDTH - 1)
                  tile_x_count <= tile_x_count + 1;
             else
+             begin
                 tile_x_count <= 0;
                 if (tile_y_count < TILE_HEIGHT - 1)
                      tile_y_count <= tile_y_count + 1;
                 else
                     tile_y_count <= 0;
+             end     
         end
     end
     
@@ -106,20 +105,25 @@ module TILE_GENERATION #(
         else
             tile_y = 3;
     end
-
-    always@(*)    
-    begin
-        tile_idx = {tile_y, tile_x}; // concatenate tile_y and tile_x to get tile_idx
-    end
+    
+    wire [3:0] currnet_tile_idx;
+    assign currnet_tile_idx = {tile_y, tile_x}; // concatenate tile_y and tile_x to get tile_idx
+  
 
     always@(posedge clk or negedge rst_n)
      begin
         if (!rst_n)
+          begin
            pixel_out <= 8'b0;
            pixel_v_out <= 0;
-        else if (pixel_v)   
+           tile_idx <= 4'b0;
+          end 
+        else    
+          begin
            pixel_out <= pixel_in;
            pixel_v_out <= pixel_v;
+           tile_idx <= currnet_tile_idx;
+          end 
      end   
 
 
