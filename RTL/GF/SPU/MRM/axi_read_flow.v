@@ -1,5 +1,5 @@
 module axi_read_flow #(
-    parameter AXI_DATA_WIDTH = 128,
+    parameter AXI_DATA_WIDTH = 64,
     parameter AXI_ADDR_WIDTH = 32,
     parameter IMG_WIDTH      = 1280,
     parameter IMG_HEIGHT     = 720,
@@ -18,7 +18,7 @@ module axi_read_flow #(
     // Flow FIFO Interface
     input  wire                      fifo_full,
     output wire [AXI_DATA_WIDTH-1:0] fifo_data,
-    output reg                       fifo_en,
+    output wire                       fifo_en,
 
     // AXI4 Smart Connect AR Channel
     output reg  [AXI_ADDR_WIDTH-1:0] araddr,
@@ -32,7 +32,7 @@ module axi_read_flow #(
     input  wire [AXI_DATA_WIDTH-1:0] rdata,
     input  wire                      rlast,
     input  wire                      rvalid,
-    output reg                       rready
+    output wire                       rready
 );
 
     localparam BYTES_PER_BEAT = AXI_DATA_WIDTH / 8;
@@ -63,22 +63,24 @@ module axi_read_flow #(
     reg [31:0] beats_read;
     reg [31:0] current_address;
     wire [31:0] remaining_beats = target_beats - beats_read;
+    assign rready = (state == READ_DATA) && ~fifo_full;
+    assign fifo_en = (state == READ_DATA) && rvalid && rready;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state           <= IDLE;
             read_done       <= 1'b0;
-            fifo_en         <= 1'b0;
+            // fifo_en         <= 1'b0;
             araddr          <= 32'd0;
             arlen           <= 8'd0;
             arvalid         <= 1'b0;
-            rready          <= 1'b0;
+            // rready          <= 1'b0;
             target_beats    <= 32'd0;
             beats_read      <= 32'd0;
             current_address <= 32'd0;
         end else begin
             read_done <= 1'b0;
-            fifo_en   <= 1'b0;
+            // fifo_en   <= 1'b0;
 
             case (state)
                 IDLE: begin
@@ -108,9 +110,9 @@ module axi_read_flow #(
                 end
 
                 READ_DATA: begin
-                    rready <= ~fifo_full;
+                    // rready <= ~fifo_full;
                     if (rvalid && rready) begin
-                        fifo_en    <= 1'b1;
+                        // fifo_en    <= 1'b1;
                         beats_read <= beats_read + 1;
                         if (rlast) begin
                             current_address <= current_address + ((arlen + 1) * BYTES_PER_BEAT);

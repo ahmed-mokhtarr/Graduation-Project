@@ -9,7 +9,7 @@ module spu_fsm (
 
     // Outputs
     output reg         idle_spu,
-    output reg         mem_read_start,
+    output reg         operation_start, //all operations start
     
     // Configuration Outputs to Memory Read Module
     output wire [1:0]  curr_frame_idx,
@@ -47,13 +47,13 @@ module spu_fsm (
         if (!rst_n) begin
             current_state         <= IDLE;
             idle_spu              <= 1'b1;
-            mem_read_start          <= 1'b0;
+            operation_start          <= 1'b0;
             current_layer         <= 3'd0;
             curr_frame         <= 2'b00;
             prev_frame <= 2'b00;
         end else begin
             // Default pulse clear
-            mem_read_start <= 1'b0;
+            operation_start <= 1'b0;
 
             case (current_state)
                 IDLE: begin
@@ -69,7 +69,7 @@ module spu_fsm (
 
                 PYRAMID_PROCESSING: begin
                     // Trigger memory read module using the output configuration
-                    mem_read_start  <= 1'b1;
+                    operation_start  <= 1'b1;
                     current_state <= LAYER_SWITCHING;
                 end
 
