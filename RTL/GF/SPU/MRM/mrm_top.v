@@ -5,17 +5,18 @@ module mrm_top #(
     parameter IMG_WIDTH       = 1280,
     parameter IMG_HEIGHT      = 720,
     parameter BYTES_PER_PIXEL = 1,
-    parameter BYTES_PER_FLOW  = 4,
+    parameter BYTES_PER_FLOW  = 2,
     
     // parameters for asymmetric FIFO read widths
     parameter PIXEL_WIDTH     = 8,  // matches BYTES_PER_PIXEL * 8
-    parameter FLOW_WIDTH      = 32, // matches BYTES_PER_FLOW * 8
+    parameter FLOW_WIDTH      = 16, // matches BYTES_PER_FLOW * 8
     
     // Base Addresses
     parameter FRAME0_BASE     = 32'h1000_0000,
     parameter FRAME1_BASE     = 32'h2000_0000,
     parameter FRAME2_BASE     = 32'h3000_0000,
-    parameter FRAME3_BASE     = 32'h4000_0000
+    parameter FRAME3_BASE     = 32'h4000_0000,
+    parameter FLOW_OUT_BASE   = 32'h5000_0000
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -85,14 +86,40 @@ module mrm_top #(
 );
 
     // -------------------------------------------------------------------------
+    // FIFO Flush Logic — clear stale data between layer transitions
+    // Generates a short reset pulse when mem_read_start fires
+    // -------------------------------------------------------------------------
+    reg [2:0] flush_cnt;
+    wire fifo_flush = (flush_cnt != 3'd0);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            flush_cnt <= 3'd0;
+        else if (mem_read_start)
+            flush_cnt <= 3'd4;   // 4-cycle flush
+        else if (flush_cnt != 3'd0)
+            flush_cnt <= flush_cnt - 3'd1;
+    end
+
+    // -------------------------------------------------------------------------
     // Internal Wires for ACU -> AXI Readers
     // -------------------------------------------------------------------------
     wire [31:0] acu_curr_addr;
     wire [31:0] acu_prev_addr;
     wire [31:0] acu_flow_addr;
     wire        acu_flow_enable;
-    wire        acu_start_read;
+    wire        acu_start_read_raw;  // direct from ACU (used for flag clearing)
     wire [2:0]  acu_layer_out;
+
+    // Delay start_read to readers so it fires AFTER the FIFO flush completes
+    reg [4:0] start_delay_sr;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            start_delay_sr <= 5'd0;
+        else
+            start_delay_sr <= {start_delay_sr[3:0], acu_start_read_raw};
+    end
+    wire acu_start_read = start_delay_sr[4];  // 5-cycle delay after ACU's pulse
 
     // -------------------------------------------------------------------------
     // Internal Wires for AXI Readers -> FIFOs (Write side remains AXI width)
@@ -119,7 +146,7 @@ module mrm_top #(
     // -------------------------------------------------------------------------
     // Data & Flow Ready Logic (As per spec)
     // -------------------------------------------------------------------------
-    assign data_ready = (~curr_fifo_empty) & (~prev_fifo_empty);
+    assign data_ready = (~curr_fifo_empty) & (~prev_fifo_empty) & ((current_layer == 3'd4) | (~flow_fifo_empty));
     assign flow_ready = (~flow_fifo_empty);
 
     // -------------------------------------------------------------------------
@@ -131,7 +158,8 @@ module mrm_top #(
         .FRAME0_BASE(FRAME0_BASE),
         .FRAME1_BASE(FRAME1_BASE),
         .FRAME2_BASE(FRAME2_BASE),
-        .FRAME3_BASE(FRAME3_BASE)
+        .FRAME3_BASE(FRAME3_BASE),
+        .FLOW_OUT_BASE(FLOW_OUT_BASE)
     ) u_acu (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -144,7 +172,7 @@ module mrm_top #(
         .prev_frame_addr  (acu_prev_addr),
         .flow_addr        (acu_flow_addr),
         .flow_enable      (acu_flow_enable),
-        .start_read       (acu_start_read),
+        .start_read       (acu_start_read_raw),
         .current_layer_out(acu_layer_out)
     );
 
@@ -251,7 +279,7 @@ module mrm_top #(
     // Current Frame FIFO
     fifo_generator_img u_curr_fifo (
         .clk    (clk),
-        .srst   (~rst_n),
+        .srst   (~rst_n | fifo_flush),
         .din    (curr_fifo_din),   // AXI_DATA_WIDTH
         .wr_en  (curr_fifo_we),
         .rd_en  (curr_rd_en),
@@ -263,7 +291,7 @@ module mrm_top #(
     // Previous Frame FIFO
     fifo_generator_img u_prev_fifo (
         .clk    (clk),
-        .srst   (~rst_n),
+        .srst   (~rst_n | fifo_flush),
         .din    (prev_fifo_din),   // AXI_DATA_WIDTH
         .wr_en  (prev_fifo_we),
         .rd_en  (prev_rd_en),
@@ -275,7 +303,7 @@ module mrm_top #(
     // Optical Flow FIFO 
     fifo_generator_flow u_flow_fifo (
         .clk    (clk),
-        .srst   (~rst_n),
+        .srst   (~rst_n | fifo_flush),
         .din    (flow_fifo_din),   // AXI_DATA_WIDTH
         .wr_en  (flow_fifo_we),
         .rd_en  (flow_rd_en),

@@ -47,9 +47,10 @@ module line_buffer_bank #(
     reg [7:0] rd_0, rd_1, rd_2, rd_3, rd_4, rd_5;
 
     // Drain pixel: uses registered reads aligned with current col_cnt
+    // Accounts for the +1 row shift that happens every drain row
     assign drain_pixel = (drain_sel == 2'd0) ? rd_1 :
-                          (drain_sel == 2'd1) ? rd_2 :
-                                                rd_3;
+                         (drain_sel == 2'd1) ? rd_3 :
+                                               rd_5;
 
     // Select actual input: external or drain
     wire [7:0] pixel_in = drain_en ? drain_pixel : s_axis_tdata;

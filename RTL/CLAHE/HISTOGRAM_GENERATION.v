@@ -3,6 +3,7 @@ module histogram_generation
     input   wire              clk,
     input   wire              rst_n,
 
+    input   wire              frame_start,     // start of frame – resets counters
     input   wire              pixel_v,         // valid signal
     input   wire   [7:0]      pixel_in,        // data_in
     input   wire   [3:0]      tile_idx,
@@ -72,6 +73,11 @@ always @(posedge clk or negedge rst_n)
     valid_reg <= 1'b0;
     addr_reg <= 12'b0;
    end 
+  else if (frame_start)
+   begin
+    valid_reg <= 1'b0;
+    addr_reg <= 12'b0;
+   end
   else
    begin
     valid_reg <= pixel_v;
@@ -94,6 +100,13 @@ always@(posedge clk or negedge rst_n)
         fwd_valid_2 <= 0;     // Reset Stage 2
         fwd_addr_2 <= 0;      // Reset Stage 2
         fwd_wr_data_2 <= 0;   // Reset Stage 2
+        pixel_count <= 0;
+     end
+    else if (frame_start)
+     begin
+        wr_bram_en <= 0;
+        fwd_valid <= 0;
+        fwd_valid_2 <= 0;
         pixel_count <= 0;
      end   
     else if(valid_reg) 

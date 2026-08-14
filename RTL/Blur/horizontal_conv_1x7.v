@@ -1,9 +1,15 @@
 // ============================================================================
-// Horizontal 1x7 Convolution - Row Buffer with Centered BORDER_REFLECT_101
+// Horizontal 1x7 Convolution - Double-Buffered, Full Throughput
 // ============================================================================
-// Stores one full row of vertical conv output in a buffer, then computes
-// the centered horizontal convolution for all W pixels using reflected
-// border indices. No drain state machine needed.
+// Uses two row buffers: while storing row N+1 into one buffer, computes
+// and outputs row N from the other. This achieves 1 pixel/clock throughput
+// (no stalling of upstream).
+//
+// FSM:
+//   S_FIRST_ROW    → Store first row (no output)
+//   S_PIPE         → Overlap: store row N+1 + compute row N (1 px/clk)
+//   S_LAST_COMPUTE → Compute final row (no more input)
+//   S_DONE         → Idle until reset
 //
 // Interface:
 //   Input:  Simple wires (in_data, in_valid, in_last) — from vertical conv
@@ -11,7 +17,8 @@
 // ============================================================================
 
 module horizontal_conv_1x7 #(
-    parameter IMG_WIDTH = 1280
+    parameter IMG_WIDTH  = 1280,
+    parameter IMG_HEIGHT = 720
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -24,7 +31,7 @@ module horizontal_conv_1x7 #(
     output reg         m_axis_tvalid,
     input  wire        m_axis_tready,
     output reg         m_axis_tlast,
-    // Backpressure: high during S_COMPUTE to stall upstream
+    // Backpressure: always 0 (double-buffered, never stalls upstream)
     output wire        busy
 );
 
@@ -34,25 +41,24 @@ module horizontal_conv_1x7 #(
     localparam [9:0] C3 = 10'd632;
     localparam W = IMG_WIDTH;
 
-    // Row buffer
-    (* ram_style = "distributed" *) reg [20:0] rbuf [0:W-1];
+    // Double row buffers
+    (* ram_style = "distributed" *) reg [20:0] rbuf_0 [0:W-1];
+    (* ram_style = "distributed" *) reg [20:0] rbuf_1 [0:W-1];
 
-    // FSM: STORE row, then COMPUTE centered output
-    localparam S_STORE   = 1'b0;
-    localparam S_COMPUTE = 1'b1;
-    reg state;
+    // FSM states
+    localparam [1:0] S_FIRST_ROW    = 2'd0;
+    localparam [1:0] S_PIPE         = 2'd1;
+    localparam [1:0] S_LAST_COMPUTE = 2'd2;
+    localparam [1:0] S_DONE         = 2'd3;
+    reg [1:0] state;
 
-    // Assert busy during S_COMPUTE, AND during the S_STORE cycle that
-    // receives the last pixel (in_valid && in_last). This prevents the
-    // line buffer from advancing one extra cycle at the boundary, which
-    // would cause a 1-column shift (the vertical conv would produce a
-    // pixel that nobody consumes). No combinational loop because in_valid
-    // and in_last come from vertical conv's registered outputs.
-    assign busy = (state == S_COMPUTE) ||
-                  (state == S_STORE && in_valid && in_last);
+    // sel: 0 = write buf_0, read buf_1  |  1 = write buf_1, read buf_0
+    reg sel;
+    reg [$clog2(W)-1:0] col;
+    reg [$clog2(IMG_HEIGHT)-1:0] row_cnt;  // counts completed rows stored
 
-    reg [$clog2(W)-1:0] wr_col;
-    reg [$clog2(W)-1:0] rd_col;
+    // Never stall upstream — double-buffered
+    assign busy = 1'b0;
 
     // Reflect index for BORDER_REFLECT_101
     function [$clog2(W)-1:0] reflect;
@@ -67,22 +73,23 @@ module horizontal_conv_1x7 #(
         end
     endfunction
 
-    // 7 tap indices for centered conv at rd_col
-    wire signed [12:0] si0 = $signed({1'b0, rd_col}) - 13'sd3;
-    wire signed [12:0] si1 = $signed({1'b0, rd_col}) - 13'sd2;
-    wire signed [12:0] si2 = $signed({1'b0, rd_col}) - 13'sd1;
-    wire signed [12:0] si3 = $signed({1'b0, rd_col});
-    wire signed [12:0] si4 = $signed({1'b0, rd_col}) + 13'sd1;
-    wire signed [12:0] si5 = $signed({1'b0, rd_col}) + 13'sd2;
-    wire signed [12:0] si6 = $signed({1'b0, rd_col}) + 13'sd3;
+    // 7 tap indices centered on col (for compute from read buffer)
+    wire signed [12:0] si0 = $signed({1'b0, col}) - 13'sd3;
+    wire signed [12:0] si1 = $signed({1'b0, col}) - 13'sd2;
+    wire signed [12:0] si2 = $signed({1'b0, col}) - 13'sd1;
+    wire signed [12:0] si3 = $signed({1'b0, col});
+    wire signed [12:0] si4 = $signed({1'b0, col}) + 13'sd1;
+    wire signed [12:0] si5 = $signed({1'b0, col}) + 13'sd2;
+    wire signed [12:0] si6 = $signed({1'b0, col}) + 13'sd3;
 
-    wire [20:0] t0 = rbuf[reflect(si0)];
-    wire [20:0] t1 = rbuf[reflect(si1)];
-    wire [20:0] t2 = rbuf[reflect(si2)];
-    wire [20:0] t3 = rbuf[reflect(si3)];
-    wire [20:0] t4 = rbuf[reflect(si4)];
-    wire [20:0] t5 = rbuf[reflect(si5)];
-    wire [20:0] t6 = rbuf[reflect(si6)];
+    // Read from the appropriate buffer based on sel
+    wire [20:0] t0 = sel ? rbuf_0[reflect(si0)] : rbuf_1[reflect(si0)];
+    wire [20:0] t1 = sel ? rbuf_0[reflect(si1)] : rbuf_1[reflect(si1)];
+    wire [20:0] t2 = sel ? rbuf_0[reflect(si2)] : rbuf_1[reflect(si2)];
+    wire [20:0] t3 = sel ? rbuf_0[reflect(si3)] : rbuf_1[reflect(si3)];
+    wire [20:0] t4 = sel ? rbuf_0[reflect(si4)] : rbuf_1[reflect(si4)];
+    wire [20:0] t5 = sel ? rbuf_0[reflect(si5)] : rbuf_1[reflect(si5)];
+    wire [20:0] t6 = sel ? rbuf_0[reflect(si6)] : rbuf_1[reflect(si6)];
 
     // Symmetric pre-add and MAC
     wire [21:0] sym0 = {1'b0, t0} + {1'b0, t6};
@@ -98,40 +105,78 @@ module horizontal_conv_1x7 #(
     // FSM
     always @(posedge clk) begin
         if (!rst_n) begin
-            state  <= S_STORE;
-            wr_col <= 0;
-            rd_col <= 0;
+            state         <= S_FIRST_ROW;
+            sel           <= 1'b0;
+            col           <= 0;
+            row_cnt       <= 0;
             m_axis_tvalid <= 0;
             m_axis_tdata  <= 0;
             m_axis_tlast  <= 0;
         end else begin
             case (state)
-                S_STORE: begin
-                    m_axis_tvalid <= 0;
+                // ── Store first row into buf_0, no output ──
+                S_FIRST_ROW: begin
+                    m_axis_tvalid <= 1'b0;
                     if (in_valid) begin
-                        rbuf[wr_col] <= in_data;
-                        if (in_last || wr_col == W - 1) begin
-                            wr_col <= 0;
-                            rd_col <= 0;
-                            state  <= S_COMPUTE;
+                        rbuf_0[col] <= in_data;
+                        if (col == W - 1) begin
+                            col     <= 0;
+                            sel     <= 1'b1;  // next: write buf_1, read buf_0
+                            row_cnt <= row_cnt + 1;
+                            state   <= S_PIPE;
                         end else begin
-                            wr_col <= wr_col + 1;
+                            col <= col + 1;
                         end
                     end
                 end
 
-                S_COMPUTE: begin
-                    if (m_axis_tready | ~m_axis_tvalid) begin
-                        m_axis_tvalid <= 1;
+                // ── Overlapped: store row N+1 to write buf, compute row N from read buf ──
+                S_PIPE: begin
+                    if (in_valid) begin
+                        // Store to write buffer
+                        if (sel)
+                            rbuf_1[col] <= in_data;
+                        else
+                            rbuf_0[col] <= in_data;
+
+                        // Compute from read buffer and output
+                        m_axis_tvalid <= 1'b1;
                         m_axis_tdata  <= pixel_out;
-                        m_axis_tlast  <= (rd_col == W - 1);
-                        if (rd_col == W - 1) begin
-                            rd_col <= 0;
-                            state  <= S_STORE;
+                        m_axis_tlast  <= (col == W - 1);
+
+                        if (col == W - 1) begin
+                            col     <= 0;
+                            sel     <= ~sel;     // swap buffers
+                            row_cnt <= row_cnt + 1;
+                            // Last row stored → compute it next
+                            if (row_cnt == IMG_HEIGHT - 1)
+                                state <= S_LAST_COMPUTE;
                         end else begin
-                            rd_col <= rd_col + 1;
+                            col <= col + 1;
+                        end
+                    end else begin
+                        m_axis_tvalid <= 1'b0;
+                    end
+                end
+
+                // ── Compute final row from read buffer (no more input) ──
+                S_LAST_COMPUTE: begin
+                    if (m_axis_tready | ~m_axis_tvalid) begin
+                        m_axis_tvalid <= 1'b1;
+                        m_axis_tdata  <= pixel_out;
+                        m_axis_tlast  <= (col == W - 1);
+                        if (col == W - 1) begin
+                            col   <= 0;
+                            state <= S_DONE;
+                        end else begin
+                            col <= col + 1;
                         end
                     end
+                end
+
+                // ── Idle until reset ──
+                S_DONE: begin
+                    m_axis_tvalid <= 1'b0;
                 end
             endcase
         end

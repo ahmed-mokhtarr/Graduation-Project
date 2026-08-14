@@ -8,6 +8,7 @@ module mem_read_acu #(
     parameter FRAME1_BASE = 32'h2000_0000,
     parameter FRAME2_BASE = 32'h3000_0000,
     parameter FRAME3_BASE = 32'h4000_0000,
+    parameter FLOW_OUT_BASE = 32'h5000_0000
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -39,6 +40,14 @@ module mem_read_acu #(
     
     // Total size of all frame data (Original + 4 thumbnails)
     localparam TOTAL_FRAME_SIZE = OFFSET_L4 + ((IMG_WIDTH >> 4) * (IMG_HEIGHT >> 4));
+
+    // Pre-calculated Flow Offsets (2 bytes per flow pixel)
+    localparam BYTES_PER_FLOW_PIXEL = 2;
+    localparam FLOW_OFFSET_L0 = 32'd0;
+    localparam FLOW_OFFSET_L1 = FLOW_OFFSET_L0 + (IMG_WIDTH       * IMG_HEIGHT       * BYTES_PER_FLOW_PIXEL);
+    localparam FLOW_OFFSET_L2 = FLOW_OFFSET_L1 + ((IMG_WIDTH >> 1) * (IMG_HEIGHT >> 1) * BYTES_PER_FLOW_PIXEL);
+    localparam FLOW_OFFSET_L3 = FLOW_OFFSET_L2 + ((IMG_WIDTH >> 2) * (IMG_HEIGHT >> 2) * BYTES_PER_FLOW_PIXEL);
+    localparam FLOW_OFFSET_L4 = FLOW_OFFSET_L3 + ((IMG_WIDTH >> 3) * (IMG_HEIGHT >> 3) * BYTES_PER_FLOW_PIXEL);
 
     // -------------------------------------------------------------------------
     // Combinational Logic for Address Decoding
@@ -81,6 +90,18 @@ module mem_read_acu #(
         endcase
     end
 
+    // Decode flow layer offset (Flow used is from previous layer -> layer + 1)
+    reg [31:0] flow_layer_offset;
+    always @(*) begin
+        case (current_layer)
+            3'd0: flow_layer_offset = FLOW_OFFSET_L1;
+            3'd1: flow_layer_offset = FLOW_OFFSET_L2;
+            3'd2: flow_layer_offset = FLOW_OFFSET_L3;
+            3'd3: flow_layer_offset = FLOW_OFFSET_L4;
+            default: flow_layer_offset = 32'd0;
+        endcase
+    end
+
     // -------------------------------------------------------------------------
     // Sequential Logic: Latch and Output
     // -------------------------------------------------------------------------
@@ -102,8 +123,8 @@ module mem_read_acu #(
                 prev_frame_addr <= base_addr_prev + layer_offset;
                 
                 // Calculate and latch Flow Address
-                // It points to the region following the total frame data
-                flow_addr <= base_addr_curr + TOTAL_FRAME_SIZE; 
+                // It points to the generated flow from the previous layer
+                flow_addr <= FLOW_OUT_BASE + flow_layer_offset; 
 
                 // Flow Enable Logic: Active for all except layer 4
                 if (current_layer == 3'd4) begin

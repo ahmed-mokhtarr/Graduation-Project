@@ -14,8 +14,7 @@ module spu_fsm (
     // Configuration Outputs to Memory Read Module
     output wire [1:0]  curr_frame_idx,
     output wire [1:0]  prev_frame_idx,
-    output reg  [2:0]  current_layer,
-
+    output reg  [2:0]  current_layer
 );
 
     // -------------------------------------------------------------------------

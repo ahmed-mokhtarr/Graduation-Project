@@ -1,9 +1,9 @@
 module update_matrices #(
-    parameter W_R2 = 47,
-    parameter W_R3 = 49,
-    parameter W_R4 = 46,
-    parameter W_R5 = 49,
-    parameter W_R6 = 47,
+    parameter W_R2 = 23,
+    parameter W_R3 = 25,
+    parameter W_R4 = 22,
+    parameter W_R5 = 25,
+    parameter W_R6 = 23,
 
     // Calculated parameters
     parameter W_DB_X = W_R2 + 1,
@@ -23,12 +23,12 @@ module update_matrices #(
 
     parameter W_A_TRACE = (W_A11 > W_A22 ? W_A11 : W_A22) + 1,
 
-    parameter W_G11 = (W_A11_SQ > W_A12_SQ ? W_A11_SQ : W_A12_SQ) + 1,
-    parameter W_G22 = (W_A12_SQ > W_A22_SQ ? W_A12_SQ : W_A22_SQ) + 1,
-    parameter W_G12 = W_A12 + W_A_TRACE,
+    parameter W_G11 = ((W_A11_SQ > W_A12_SQ ? W_A11_SQ : W_A12_SQ) + 1),
+    parameter W_G22 = ((W_A12_SQ > W_A22_SQ ? W_A12_SQ : W_A22_SQ) + 1),
+    parameter W_G12 = (W_A12 + W_A_TRACE),
 
-    parameter W_H1 = (W_H1_T1 > W_H1_T2 ? W_H1_T1 : W_H1_T2) + 1,
-    parameter W_H2 = (W_H2_T1 > W_H2_T2 ? W_H2_T1 : W_H2_T2) + 1
+    parameter W_H1 = ((W_H1_T1 > W_H1_T2 ? W_H1_T1 : W_H1_T2) + 1),
+    parameter W_H2 = ((W_H2_T1 > W_H2_T2 ? W_H2_T1 : W_H2_T2) + 1)
 )(
     input  wire                 clk,
     input  wire                 rst_n,
@@ -153,12 +153,12 @@ module update_matrices #(
             vector_h2_out  <= 'd0;
             valid_out      <= 1'b0;
         end else if (valid_s2) begin
-            matrix_G11_out <= $signed(A11_squared_s2) + $signed(A12_squared_s2); // A11^2 + A12^2
-            matrix_G22_out <= $signed(A12_squared_s2) + $signed(A22_squared_s2); // A12^2 + A22^2
-            matrix_G12_out <= matrix_A12_delay_s2 * A_trace_sum_s2;              // A12(A11 + A22)
+            matrix_G11_out <= ($signed(A11_squared_s2) + $signed(A12_squared_s2)) >>> 0; // A11^2 + A12^2
+            matrix_G22_out <= ($signed(A12_squared_s2) + $signed(A22_squared_s2)) >>> 0; // A12^2 + A22^2
+            matrix_G12_out <= (matrix_A12_delay_s2 * A_trace_sum_s2) >>> 0;              // A12(A11 + A22)
             
-            vector_h1_out  <= $signed(h1_term1_s2)  + $signed(h1_term2_s2);  // A11 * delta_b_x + A12 * delta_b_y
-            vector_h2_out  <= $signed(h2_term1_s2)  + $signed(h2_term2_s2);  // A12 * delta_b_x + A22 * delta_b_y
+            vector_h1_out  <= ($signed(h1_term1_s2)  + $signed(h1_term2_s2)) >>> 0;  // A11 * delta_b_x + A12 * delta_b_y
+            vector_h2_out  <= ($signed(h2_term1_s2)  + $signed(h2_term2_s2)) >>> 0;  // A12 * delta_b_x + A22 * delta_b_y
             
             valid_out      <= 1'b1;
         end else begin

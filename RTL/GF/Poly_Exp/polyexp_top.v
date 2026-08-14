@@ -3,8 +3,8 @@ module poly_exp_top (
     input  wire               rst_n,
     
     // Video Timing & Control In
-    input  wire               vsync_in,
-    input  wire               hsync_in,
+    // input  wire               vsync_in,
+    // input  wire               hsync_in,
     input  wire               valid_in,
     input  wire [2:0]         layer_config,
 
@@ -20,9 +20,6 @@ module poly_exp_top (
     
     // Final Polynomial Coefficients (r2 to r6), after >>> 32 normalisation
     // Widths = raw_width - 32:
-    //   r2,r6 (p1,29-bit in): 47-32 = 15  → [14:0]
-    //   r3,r5 (p0,29-bit in): 49-32 = 17  → [16:0]
-    //   r4    (p2,29-bit in): 46-32 = 14  → [13:0]
     output wire signed [14:0] r2_out,
     output wire signed [16:0] r3_out,
     output wire signed [13:0] r4_out,
@@ -91,17 +88,16 @@ module poly_exp_top (
     localparam R5_W = VERT_W + 20;  // = 49  (raw)
     localparam R6_W = VERT_W + 18;  // = 47  (raw)
 
-    // Output widths after >>> 32 normalisation  (raw_width - 32)
-    localparam OUT_R2_W = R2_W - 32;  // = 15
-    localparam OUT_R3_W = R3_W - 32;  // = 17
-    localparam OUT_R4_W = R4_W - 32;  // = 14
-    localparam OUT_R5_W = R5_W - 32;  // = 17
-    localparam OUT_R6_W = R6_W - 32;  // = 15
+    // Output widths after >>> 24 normalisation  (raw_width - 24)
+    localparam OUT_R2_W = R2_W - 24;  // = 23
+    localparam OUT_R3_W = R3_W - 24;  // = 25
+    localparam OUT_R4_W = R4_W - 24;  // = 22
+    localparam OUT_R5_W = R5_W - 24;  // = 25
+    localparam OUT_R6_W = R6_W - 24;  // = 23
 
     // ========================================================
     // Valid Signal Routing
     // ========================================================
-    // Vertical filters need 5 rows in the line buffers before producing valid output.
     // Enable them when y_counter is in [5 .. current_height+4] (inclusive),
     // covering the 5 boundary-extension rows past the frame bottom.
     wire v_filter_valid;
@@ -122,7 +118,7 @@ module poly_exp_top (
     generate
         for (i = 0; i < 10; i = i + 1) begin : gen_line_buffers
             wire [7:0] lb_din = (i == 0) ? pixel_in : delay_taps[i-1];
-            line_buffer u_line_buffer (
+            gf_line_buffer u_line_buffer (
                 .clk          (clk),
                 .rst_n        (rst_n),
                 .valid_in     (valid_in),
@@ -482,8 +478,8 @@ module poly_exp_top (
     );
 
     // ========================================================
-    // 9. Final Normalisation (>>> 32 = remove the two Q16 scales)
-    // Output ports are sized to OUT_R*_W = raw_width - 32, so
+    // 9. Final Normalisation (>>> 24)
+    // Output ports are sized to OUT_R*_W = raw_width - 24, so
     // the assignment captures exactly the meaningful bits.
     // ========================================================
     assign r2_out = r2_raw >>> 32;

@@ -38,10 +38,11 @@ module axi_read_curr #(
     // Local Parameters & Size Calculation
     // -------------------------------------------------------------------------
     localparam BYTES_PER_BEAT = AXI_DATA_WIDTH / 8;
-    localparam IDLE           = 2'b00;
-    localparam WRITE_ADDR     = 2'b01;
-    localparam READ_DATA      = 2'b10;
-    localparam CHECK_FINISH   = 2'b11;
+    localparam IDLE           = 3'b000;
+    localparam WRITE_ADDR     = 3'b001;
+    localparam READ_DATA      = 3'b010;
+    localparam CHECK_FINISH   = 3'b011;
+    localparam DRAIN_BURST    = 3'b100;
 
     // Calculate total beats for the requested layer
     reg [31:0] total_beats_wire;
@@ -65,38 +66,72 @@ module axi_read_curr #(
     // -------------------------------------------------------------------------
     // FSM & Control Logic
     // -------------------------------------------------------------------------
-    reg [1:0]  state;
-    reg [31:0] target_beats; // size may be changed
+    reg [2:0]  state;
+    reg [31:0] target_beats;
     reg [31:0] beats_read;
     reg [31:0] current_address;
+
+    // Pending restart registers (for abort-and-restart)
+    reg        restart_pending;
+    reg [31:0] pend_target;
+    reg [31:0] pend_addr;
+    reg [7:0]  pend_arlen;
     
     wire [31:0] remaining_beats = target_beats - beats_read;
-    assign rready = (state == READ_DATA) && ~fifo_full;
+
+    // rready: accept data in READ_DATA (if FIFO not full) or DRAIN_BURST (always accept to discard)
+    assign rready  = ((state == READ_DATA) && ~fifo_full) || (state == DRAIN_BURST);
+    // Only write to FIFO during normal READ_DATA, NOT during DRAIN
     assign fifo_en = (state == READ_DATA) && rvalid && rready;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state           <= IDLE;
             read_done       <= 1'b0;
-            // fifo_en         <= 1'b0;
             araddr          <= 32'd0;
             arlen           <= 8'd0;
             arvalid         <= 1'b0;
-            // rready          <= 1'b0;
             target_beats    <= 32'd0;
             beats_read      <= 32'd0;
             current_address <= 32'd0;
+            restart_pending <= 1'b0;
+            pend_target     <= 32'd0;
+            pend_addr       <= 32'd0;
+            pend_arlen      <= 8'd0;
         end else begin
             read_done <= 1'b0;
-            // fifo_en   <= 1'b0;
 
+            // ── Abort-and-restart: start_read in a non-IDLE state ──────────
+            if (start_read && state != IDLE) begin
+                pend_target <= total_beats_wire;
+                pend_addr   <= curr_addr;
+                pend_arlen  <= (total_beats_wire > 256) ? 8'd255 : (total_beats_wire[7:0] - 8'd1);
+                restart_pending <= 1'b1;
+
+                if (state == CHECK_FINISH) begin
+                    // No in-flight AXI burst — start new read immediately
+                    target_beats    <= total_beats_wire;
+                    current_address <= curr_addr;
+                    beats_read      <= 32'd0;
+                    arlen           <= (total_beats_wire > 256) ? 8'd255 : (total_beats_wire[7:0] - 8'd1);
+                    araddr          <= curr_addr;
+                    arvalid         <= 1'b1;
+                    state           <= WRITE_ADDR;
+                    restart_pending <= 1'b0;
+                end else if (state == READ_DATA) begin
+                    // In-flight burst — drain remaining beats (discard data)
+                    state <= DRAIN_BURST;
+                end
+                // WRITE_ADDR: keep waiting for arready, then FSM below routes to DRAIN
+            end else begin
+
+            // ── Normal FSM ─────────────────────────────────────────────────
             case (state)
                 IDLE: begin
                     if (start_read) begin
                         target_beats    <= total_beats_wire;
                         current_address <= curr_addr;
-                        beats_read      <= 0;
-                        
-                        // Setup the first burst
+                        beats_read      <= 32'd0;
                         arlen   <= (total_beats_wire > 256) ? 8'd255 : (total_beats_wire[7:0] - 8'd1);
                         araddr  <= curr_addr;
                         arvalid <= 1'b1;
@@ -105,22 +140,17 @@ module axi_read_curr #(
                 end
 
                 WRITE_ADDR: begin
-                    // Wait for the Smart Connect to accept the address
                     if (arvalid && arready) begin
                         arvalid <= 1'b0;
-                        state   <= READ_DATA;
+                        // If a restart is pending, drain the burst we just initiated
+                        state <= restart_pending ? DRAIN_BURST : READ_DATA;
                     end
                 end
 
                 READ_DATA: begin
-                    // rready <= ~fifo_full; // Accept data if FIFO has space
-                    
                     if (rvalid && rready) begin
-                        // fifo_en    <= 1'b1;
                         beats_read <= beats_read + 1;
-                        
                         if (rlast) begin
-                            // Advance address for the next potential burst
                             current_address <= current_address + ((arlen + 1) * BYTES_PER_BEAT);
                             state           <= CHECK_FINISH;
                         end
@@ -129,18 +159,37 @@ module axi_read_curr #(
 
                 CHECK_FINISH: begin
                     if (beats_read >= target_beats) begin
-                        // Entire layer is complete
                         read_done <= 1'b1;
                         state     <= IDLE;
                     end else begin
-                        // Setup the next AXI burst transaction
                         arlen   <= (remaining_beats > 256) ? 8'd255 : (remaining_beats[7:0] - 8'd1);
                         araddr  <= current_address;
                         arvalid <= 1'b1;
                         state   <= WRITE_ADDR;
                     end
                 end
+
+                DRAIN_BURST: begin
+                    // Accept and discard AXI beats until rlast
+                    if (rvalid) begin  // rready is always 1 in DRAIN_BURST
+                        if (rlast) begin
+                            // Burst fully drained — start the new read
+                            target_beats    <= pend_target;
+                            current_address <= pend_addr;
+                            beats_read      <= 32'd0;
+                            arlen           <= pend_arlen;
+                            araddr          <= pend_addr;
+                            arvalid         <= 1'b1;
+                            state           <= WRITE_ADDR;
+                            restart_pending <= 1'b0;
+                        end
+                    end
+                end
+
+                default: state <= IDLE;
             endcase
+
+            end // else (not start_read abort)
         end
     end
 endmodule
